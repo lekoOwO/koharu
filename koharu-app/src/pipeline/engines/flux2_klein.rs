@@ -1,18 +1,12 @@
-//! AOT inpainting. Direct source + segment → result. Subdivision is handled
-//! by [`koharu_ml::inpainting::run_inpaint`] (shared with Lama) — this engine
-//! only wires up the scene I/O.
-//!
-//! For repair-brush (`ctx.options.region`), composite onto the existing
-//! `Image { Inpainted }` if present (fallback Source) and zero out mask
-//! pixels outside the region so only that area is reprocessed.
+//! Flux.2 Klein inpainter. Uses the CTD segment mask to build a looser
+//! text-region mask, then runs Flux.2 inpainting on the resulting crop.
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use image::{DynamicImage, GrayImage, Luma};
 use koharu_core::{ImageRole, MaskRole, Op, Region};
-use koharu_ml::aot_inpainting::AotInpainting;
-use koharu_ml::inpainting::expand_mask_for_inpainting;
-use koharu_ml::types::TextRegion;
+use koharu_ml::flux2_klein::{Flux2InpaintOptions, Flux2Klein};
+use koharu_ml::inpainting::mask::expand_glyph_mask_for_inpainting;
 
 use crate::pipeline::artifacts::Artifact;
 use crate::pipeline::engine::{Engine, EngineCtx, EngineInfo};
@@ -21,7 +15,7 @@ use crate::pipeline::engines::support::{
     text_nodes, upsert_image_blob,
 };
 
-pub struct Model(AotInpainting);
+pub struct Model(Flux2Klein);
 
 #[async_trait]
 impl Engine for Model {
@@ -48,17 +42,19 @@ impl Engine for Model {
                 (image, mask, bubble_mask)
             }
         };
-        let text_blocks: Vec<TextRegion> = text_nodes(ctx.scene, ctx.page)
+
+        let text_blocks = text_nodes(ctx.scene, ctx.page)
             .into_iter()
             .map(|(_, transform, text)| text_node_to_region(transform, text))
-            .collect();
-        let expanded = expand_mask_for_inpainting(&mask, &bubble_mask, &text_blocks);
+            .collect::<Vec<_>>();
+        let expanded = expand_glyph_mask_for_inpainting(&mask, &bubble_mask, &text_blocks);
         let mask = match ctx.options.region {
-            Some(r) => clip_mask_to_region(&DynamicImage::ImageLuma8(expanded), &r),
+            Some(r) => DynamicImage::ImageLuma8(clip_gray_mask_to_region(&expanded, &r)),
             None => DynamicImage::ImageLuma8(expanded),
         };
-
-        let result = self.0.inference(&image, &mask, &bubble_mask)?;
+        let result =
+            self.0
+                .inpaint_with_reference(&image, &mask, None, &Flux2InpaintOptions::default())?;
         let (w, h) = image_dimensions(&result);
         let blob = ctx.blobs.put_webp(&result)?;
         Ok(vec![upsert_image_blob(
@@ -73,7 +69,10 @@ impl Engine for Model {
 }
 
 fn clip_mask_to_region(mask: &DynamicImage, region: &Region) -> DynamicImage {
-    let src = mask.to_luma8();
+    DynamicImage::ImageLuma8(clip_gray_mask_to_region(&mask.to_luma8(), region))
+}
+
+fn clip_gray_mask_to_region(src: &GrayImage, region: &Region) -> GrayImage {
     let (w, h) = src.dimensions();
     let x0 = region.x.min(w);
     let y0 = region.y.min(h);
@@ -86,17 +85,17 @@ fn clip_mask_to_region(mask: &DynamicImage, region: &Region) -> DynamicImage {
             clipped.put_pixel(x, y, Luma([src.get_pixel(x, y).0[0]]));
         }
     }
-    DynamicImage::ImageLuma8(clipped)
+    clipped
 }
 
 inventory::submit! {
     EngineInfo {
-        id: "aot-inpainting",
-        name: "AOT Inpainting",
+        id: "flux2-klein",
+        name: "Flux.2 Klein",
         needs: &[Artifact::SegmentMask, Artifact::BubbleMask],
         produces: &[Artifact::Inpainted],
-        load: |runtime, cpu| Box::pin(async move {
-            let m = AotInpainting::load(runtime, cpu).await?;
+        load: |runtime, _cpu| Box::pin(async move {
+            let m = Flux2Klein::load(runtime).await?;
             Ok(Box::new(Model(m)) as Box<dyn Engine>)
         }),
     }
