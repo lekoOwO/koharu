@@ -12,6 +12,7 @@ use axum::extract::State;
 use koharu_app::pipeline::{
     self, PipelineRunOptions, PipelineSpec, ProgressTick, Scope, WarningTick,
 };
+use koharu_app::terminology;
 use koharu_core::{
     AppEvent, JobFinishedEvent, JobStatus, JobSummary, JobWarningEvent, PageId, PipelineProgress,
     PipelineStatus, Region,
@@ -70,6 +71,8 @@ async fn start_pipeline(
     for id in &req.steps {
         pipeline::Registry::find(id).map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
     }
+    let config = (**app.config.load()).clone();
+    let terminology = terminology::load_active_glossaries(&config).map_err(ApiError::internal)?;
     let spec = PipelineSpec {
         scope: match req.pages {
             Some(pages) => Scope::Pages(pages),
@@ -80,6 +83,7 @@ async fn start_pipeline(
             target_language: req.target_language,
             system_prompt: req.system_prompt,
             default_font: req.default_font,
+            terminology,
             region: req.region,
         },
     };
