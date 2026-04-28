@@ -19,7 +19,7 @@ import {
 } from '@/components/ui/menubar'
 import { useScene } from '@/hooks/useScene'
 import { getConfig, getGetSceneJsonQueryKey, startPipeline } from '@/lib/api/default/default'
-import type { SceneSnapshot } from '@/lib/api/schemas'
+import type { Scene, SceneSnapshot } from '@/lib/api/schemas'
 import { isTauri, openExternalUrl } from '@/lib/backend'
 import { exportCurrentProjectAs, importPages } from '@/lib/io/pagesIo'
 import { closeProject, redoOp, selectAllTextNodesOnCurrentPage, undoOp } from '@/lib/io/scene'
@@ -124,34 +124,19 @@ export function MenuBar() {
       .flatMap((s) => stageToEngines[s])
       .filter((s): s is string => !!s)
     if (steps.length === 0) return
-    const editor = useEditorUiStore.getState()
-    const prefs = usePreferencesStore.getState()
-    await startPipeline({
-      steps,
-      targetLanguage: editor.selectedLanguage,
-      systemPrompt: prefs.customSystemPrompt,
-      defaultFont: prefs.defaultFont,
-    })
-  }
 
-  const runBatchTranslationPipeline = async () => {
-    const cfg = await getConfig()
-    if (!cfg.pipeline) return
-    const p = cfg.pipeline
-    const steps = [
-      p.detector,
-      p.segmenter,
-      p.bubble_segmenter,
-      p.font_detector,
-      p.ocr,
-      p.translator,
-      p.inpainter,
-      p.renderer,
-    ].filter((s): s is string => !!s)
     const editor = useEditorUiStore.getState()
     const prefs = usePreferencesStore.getState()
+    const snap = queryClient.getQueryData<SceneSnapshot>(getGetSceneJsonQueryKey())
+    const scene = snap?.scene
+
     await startPipeline({
       steps,
+      pages: scene
+        ? Object.values(scene.pages)
+            .filter((p) => !p.excluded)
+            .map((p) => p.id)
+        : undefined,
       targetLanguage: editor.selectedLanguage,
       systemPrompt: prefs.customSystemPrompt,
       defaultFont: prefs.defaultFont,
@@ -221,12 +206,6 @@ export function MenuBar() {
           onSelect: () => setBatchDialogOpen(true),
           disabled: !hasScene,
           testId: 'menu-process-all',
-        },
-        {
-          label: t('menu.processAllBatchTranslation'),
-          onSelect: () => void runBatchTranslationPipeline(),
-          disabled: !hasScene,
-          testId: 'menu-process-all-batch-translation',
         },
       ],
     },
