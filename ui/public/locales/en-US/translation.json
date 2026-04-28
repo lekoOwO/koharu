@@ -96,7 +96,11 @@
     "pages_one": "{{count}} page",
     "pages_other": "{{count}} pages",
     "empty": "No documents",
-    "prompt": "Select or import a page to begin",
+    "prompt": "Select or import pages to begin",
+    "excludedCount": "({{count}} excluded)",
+    "excludedLabel": "(Excluded)",
+    "includeInBatch": "Include in Batch",
+    "excludeFromBatch": "Exclude from Batch",
     "pageManager": {
       "title": "Page Manager",
       "description": "Drag and drop pages to reorder them."

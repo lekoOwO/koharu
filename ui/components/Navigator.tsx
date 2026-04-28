@@ -60,7 +60,9 @@ export function Navigator() {
               ? (() => {
                   const excluded = pages.filter((p) => p.excluded).length
                   const countText = t('navigator.pages', { count: totalPages - excluded })
-                  return excluded > 0 ? `${countText} (${excluded} excluded)` : countText
+                  return excluded > 0
+                    ? `${countText} ${t('navigator.excludedCount', { count: excluded })}`
+                    : countText
                 })()
               : t('navigator.empty')}
           </p>
@@ -168,14 +170,19 @@ function PagePreview({ index, pageId, selected, excluded, onSelect, onToggleExcl
           </div>
           <div className='flex shrink-0 items-center text-xs text-muted-foreground'>
             <div className='mx-auto font-semibold text-foreground'>
-              {index + 1} {excluded && <span className="ml-1 text-[10px] text-destructive uppercase">(Excluded)</span>}
+              {index + 1}{' '}
+              {excluded && (
+                <span className='ml-1 text-[10px] uppercase text-destructive'>
+                  {t('navigator.excludedLabel')}
+                </span>
+              )}
             </div>
           </div>
         </Button>
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem onSelect={onToggleExcluded}>
-          {excluded ? 'Include in Batch' : 'Exclude from Batch'}
+          {excluded ? t('navigator.includeInBatch') : t('navigator.excludeFromBatch')}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>

@@ -81,6 +81,10 @@
     "pages_other": "{{count}} 頁",
     "empty": "沒有文件",
     "prompt": "選擇或匯入頁面以開始",
+    "excludedCount": "（{{count}} 已排除）",
+    "excludedLabel": "（已排除）",
+    "includeInBatch": "包含在批次處理中",
+    "excludeFromBatch": "從批次處理中排除",
     "pageManager": {
       "title": "頁面管理",
       "description": "拖放頁面以重新排列順序。"
