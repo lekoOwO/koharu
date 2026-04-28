@@ -22,7 +22,8 @@ use atomicwrites::{AtomicFile, OverwriteBehavior};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 use fs4::fs_std::FileExt;
-use koharu_core::{Scene, op::Op};
+use indexmap::IndexMap;
+use koharu_core::{Node, NodeId, Page, PageId, ProjectMeta, Scene, op::Op};
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 
@@ -36,12 +37,69 @@ const BLOBS_DIR: &str = "blobs";
 const CACHE_DIR: &str = "cache";
 const PROJECT_TOML: &str = "project.toml";
 
-/// Snapshot written to `scene.bin`.
+const SNAPSHOT_MAGIC: &[u8; 4] = b"KHR!";
+const SNAPSHOT_VERSION: u32 = 1;
+
+/// Versioned snapshot (V1+).
 #[derive(Serialize, Deserialize)]
-struct Snapshot {
+struct SnapshotV1 {
+    magic: [u8; 4],
+    version: u32,
     epoch: u64,
     scene: Scene,
 }
+
+/// Legacy snapshot without versioning (V0).
+/// Represents the format before 'excluded' field was added and before versioning.
+#[derive(Deserialize)]
+struct SnapshotV0 {
+    epoch: u64,
+    scene: SceneV0,
+}
+
+#[derive(Deserialize)]
+struct SceneV0 {
+    project: ProjectMeta,
+    pages: IndexMap<PageId, PageV0>,
+}
+
+#[derive(Deserialize)]
+struct PageV0 {
+    id: PageId,
+    name: String,
+    width: u32,
+    height: u32,
+    nodes: IndexMap<NodeId, Node>,
+}
+
+impl SnapshotV0 {
+    fn migrate(self) -> (Scene, u64) {
+        let mut pages = IndexMap::new();
+        for (id, lp) in self.scene.pages {
+            pages.insert(
+                id,
+                Page {
+                    id: lp.id,
+                    name: lp.name,
+                    width: lp.width,
+                    height: lp.height,
+                    nodes: lp.nodes,
+                    excluded: false,
+                },
+            );
+        }
+        (
+            Scene {
+                project: self.scene.project,
+                pages,
+            },
+            self.epoch,
+        )
+    }
+}
+
+/// Current active snapshot type.
+type Snapshot = SnapshotV1;
 
 /// A loaded project.
 pub struct ProjectSession {
@@ -161,6 +219,8 @@ impl ProjectSession {
             let scene = self.scene.read();
             let epoch = self.history.lock().epoch();
             Snapshot {
+                magic: *SNAPSHOT_MAGIC,
+                version: SNAPSHOT_VERSION,
                 epoch,
                 scene: scene.clone(),
             }
@@ -187,9 +247,20 @@ fn load_snapshot(dir: &Utf8Path, creating: bool) -> Result<(Scene, u64)> {
     if scene_path.exists() {
         let bytes = std::fs::read(scene_path.as_std_path())
             .with_context(|| format!("read {}", scene_path))?;
-        let snap: Snapshot =
-            postcard::from_bytes(&bytes).with_context(|| format!("decode {}", scene_path))?;
-        return Ok((snap.scene, snap.epoch));
+
+        // 1. Try decoding with current versioned format (V1)
+        if let Ok(snap) = postcard::from_bytes::<SnapshotV1>(&bytes) {
+            if &snap.magic == SNAPSHOT_MAGIC && snap.version == 1 {
+                return Ok((snap.scene, snap.epoch));
+            }
+        }
+
+        // 2. Fallback: Try decoding with legacy unversioned format (V0)
+        if let Ok(v0) = postcard::from_bytes::<SnapshotV0>(&bytes) {
+            return Ok(v0.migrate());
+        }
+
+        anyhow::bail!("decode failed for both V1 and V0 formats (file: {})", scene_path);
     }
 
     // No snapshot — build one from `project.toml` (or defaults for creation).
