@@ -107,6 +107,7 @@ export function MenuBar() {
       targetLanguage: editor.selectedLanguage,
       systemPrompt: prefs.customSystemPrompt,
       defaultFont: prefs.defaultFont,
+      batchTranslationCharLimit: prefs.batchTranslationCharLimit,
     })
   }
 
@@ -213,6 +214,12 @@ export function MenuBar() {
           onSelect: () => setBatchDialogOpen(true),
           disabled: !hasScene,
           testId: 'menu-process-all',
+        },
+        {
+          label: t('menu.processAllBatchTranslation'),
+          onSelect: () => void runPipeline({}),
+          disabled: !hasScene,
+          testId: 'menu-process-all-batch-translation',
         },
       ],
     },
