@@ -21,7 +21,7 @@ use std::sync::atomic::AtomicBool;
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
-use koharu_core::{Op, PageId, Region, Scene};
+use koharu_core::{NodeId, Op, PageId, Region, Scene};
 use koharu_runtime::RuntimeManager;
 use parking_lot::RwLock;
 use petgraph::algo::toposort;
@@ -58,6 +58,9 @@ pub struct PipelineRunOptions {
     pub default_font: Option<String>,
     pub batch_translation_char_limit: Option<usize>,
     pub terminology: Vec<ActiveGlossary>,
+    /// Optional text-node scope for engines that can operate on individual
+    /// text blocks. Engines that render full-page artifacts ignore it.
+    pub text_node_ids: Option<Vec<NodeId>>,
     /// Optional bounding-box hint. Inpainter engines (lama/aot) honor it:
     /// composite onto the existing `Image { Inpainted }` (fallback Source)
     /// and process just that one block. Other engines ignore it.

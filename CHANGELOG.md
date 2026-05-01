@@ -1,3 +1,38 @@
+## [0.58.0](https://github.com/mayocream/koharu/compare/0.57.0..0.58.0) - 2026-05-01
+
+### 🐛 Bug Fixes
+
+- Per-block translate - ([0d4f899](https://github.com/mayocream/koharu/commit/0d4f899aed0f29df9a82043a08607997d4a99632))
+- PSD text placement & editable - ([854209e](https://github.com/mayocream/koharu/commit/854209e1ab010fe147e33041615f33b551d708a7))
+- Render on textless page - ([b3e9dea](https://github.com/mayocream/koharu/commit/b3e9dea3299915b21ba76003e194fb7bd92d8715))
+- Black color not apply - ([4ffaa1d](https://github.com/mayocream/koharu/commit/4ffaa1dfdc4240570530227f64a7ecfcaa134ed9))
+- Manual textbox modification should lock box - ([c43f3a2](https://github.com/mayocream/koharu/commit/c43f3a242a37d6c39be877e62e8e8df3d7a54df8))
+- I18n languages display names - ([56e0784](https://github.com/mayocream/koharu/commit/56e078405483192753a5f025406d4f7bf2120199))
+
+
+## [0.57.0](https://github.com/mayocream/koharu/compare/0.56.0..0.57.0) - 2026-05-01
+
+### ⛰️  Features
+
+- Chinese segmentation jieba - ([a23ebf1](https://github.com/mayocream/koharu/commit/a23ebf17515839bbedfdd8495eae9f65c78e114d))
+- Anime-text model - ([b1ed7e6](https://github.com/mayocream/koharu/commit/b1ed7e6113742f738d0f843c20f673fbd364cc9d))
+
+
+## [0.56.0](https://github.com/mayocream/koharu/compare/0.55.0..0.56.0) - 2026-05-01
+
+### ⛰️  Features
+
+- Better text rendering - ([973be25](https://github.com/mayocream/koharu/commit/973be2580d97903bac328714f0c9306b32c2761b))
+
+### ⚙️ Miscellaneous Tasks
+
+- Cleanup unused deps - ([6f82531](https://github.com/mayocream/koharu/commit/6f825319a04ad719521be040a3cc357cdb100f6e))
+
+### Fix
+
+- Centering Inconsistencies on Text Render ([#630](https://github.com/mayocream/koharu/issues/630)) - ([800c909](https://github.com/mayocream/koharu/commit/800c9090688056a6354bedfb497b4069ddbf63bf))
+
+
 ## [0.55.0](https://github.com/mayocream/koharu/compare/0.54.0..0.55.0) - 2026-04-28
 
 ### ⛰️  Features

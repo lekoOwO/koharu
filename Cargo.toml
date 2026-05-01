@@ -17,7 +17,7 @@ default-members = ["koharu"]
 resolver = "3"
 
 [workspace.package]
-version = "0.55.0"
+version = "0.58.0"
 edition = "2024"
 description = "Manga translation tools"
 license = "GPL-3.0-only"
@@ -62,8 +62,8 @@ open = "5.3"
 rfd = "0.17"
 postcard = { version = "1.0", features = ["use-std"] }
 thiserror = "2.0"
-tauri = { version = "2.9", features = ["devtools"] }
-tauri-build = "2.5"
+tauri = { version = "2.11", features = ["devtools"] }
+tauri-build = "2.6"
 tauri-plugin-dialog = "2.4"
 tauri-plugin-fs = "2.5"
 tauri-plugin-opener = "2.5"
@@ -71,7 +71,7 @@ tauri-plugin-updater = "2.10"
 blake3 = "1.8"
 rayon = "1.12"
 # disables `esaxx_fast` feature which is conflicting with `ort`
-tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+tokenizers = { version = "0.23", default-features = false, features = ["onig"] }
 strum = { version = "0.28", features = ["derive"] }
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 dirs = "6.0"
@@ -131,6 +131,7 @@ harfrust = "0.6"
 hypher = "0.1.7"
 icu_properties = "2.2"
 icu_segmenter = "2.2"
+jieba-rs = "0.9.0"
 fontdb = "0.23"
 fontdue = "0.9"
 tiny-skia = "0.12"
@@ -148,7 +149,7 @@ utoipa-axum = "0.2"
 uuid = { version = "1.18", features = ["v4", "v7", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 atomicwrites = "0.4"
-fs4 = "0.12"
+fs4 = "1"
 parking_lot = "0.12"
 dashmap = "6"
 tokio-stream = { version = "0.1", features = ["sync"] }

@@ -252,7 +252,6 @@ impl Renderer {
             .text_align
             .map(core_align_to_renderer)
             .unwrap_or(RendererTextAlign::Center);
-        let seed_box = resolved_box.seed_box;
         let layout_box = resolved_box.layout_box;
 
         let mut layout_builder = TextLayout::new(&font, None)
@@ -285,7 +284,7 @@ impl Renderer {
                 },
             )?;
             let transform = centred_sprite_transform(
-                seed_box,
+                layout_box,
                 rendered.width(),
                 rendered.height(),
                 block.transform.rotation_deg,
@@ -300,7 +299,6 @@ impl Renderer {
             let candidate = fit_rendered_with_mask_collision(
                 &layout_builder,
                 translation,
-                writing_mode,
                 layout_box,
                 style.font_size,
                 min_font_size,
@@ -327,37 +325,8 @@ impl Renderer {
             max_font,
         )?;
 
-        // A narrow bubble can be narrower than individual words (manga
-        // tall-thin balloons frequently are). The layout engine's
-        // center-align step skips lines wider than `max_width`, leaving
-        // them at x=0 while shorter lines in the same block DO get
-        // centered at `max_width/2` — so shorter lines cluster on the
-        // left instead of being centred relative to the widest line.
-        // Re-run the layout with `max_width = actual_content_width` so
-        // every line is centred relative to the block's widest line.
-        let layout = if layout.width > layout_box.width + 0.5 {
-            layout_builder
-                .clone()
-                .with_font_size(layout.font_size)
-                .with_max_width(layout.width)
-                .with_max_height(layout_box.height)
-                .run(translation)?
-        } else {
-            layout
-        };
-
         let candidate = render_candidate(&layout)?;
 
-        // Place the sprite centred on the *seed* (detector's original
-        // text bbox). The seed is always positioned where the source
-        // language placed the text — inside the bubble body, never on
-        // the tail — so anchoring here keeps translations in the body
-        // even when the bubble bbox extends into the tail area.
-        //
-        // Deliberately no clamp to `expanded_box`: clamping to the
-        // segmentation bbox can pull the sprite toward the tail side
-        // when the bbox extends past the visible body. Trusting the
-        // seed position is both simpler and visually correct.
         Ok(Some(RenderedBlock {
             node_id: block.node_id,
             sprite: DynamicImage::ImageRgba8(candidate.image),
@@ -393,8 +362,6 @@ impl Renderer {
 // ---------------------------------------------------------------------------
 
 const MASK_COLLISION_ALPHA_THRESHOLD: u8 = 8;
-const COLLISION_SQUEEZE_FACTOR: f32 = 0.90;
-const COLLISION_SQUEEZE_ATTEMPTS: usize = 3;
 const FIT_EPSILON: f32 = 0.5;
 
 struct RenderedTextCandidate {
@@ -402,9 +369,9 @@ struct RenderedTextCandidate {
     transform: Transform,
 }
 
-struct CollisionFitAttempt {
-    valid: Option<RenderedTextCandidate>,
-    fallback: Option<RenderedTextCandidate>,
+struct MaskCollisionAttempt {
+    candidate: RenderedTextCandidate,
+    valid: bool,
 }
 
 fn min_font_size_for_image(image_width: u32, image_height: u32) -> f32 {
@@ -480,7 +447,6 @@ fn fit_font_size<'a>(
 fn fit_rendered_with_mask_collision<'a, F>(
     layout_builder: &TextLayout<'a>,
     text: &str,
-    writing_mode: WritingMode,
     layout_box: LayoutBox,
     explicit_size: Option<f32>,
     min_size: f32,
@@ -492,54 +458,61 @@ fn fit_rendered_with_mask_collision<'a, F>(
 where
     F: FnMut(&LayoutRun<'a>) -> Result<RenderedTextCandidate>,
 {
-    let upper = explicit_size.unwrap_or(max_size).max(1.0).round() as i32;
-    let lower = min_size.max(1.0).round() as i32;
-    let min_size = if explicit_size.is_some() {
-        lower.min(upper)
-    } else {
-        lower
-    };
-    let max_size = upper.max(min_size);
+    if let Some(size) = explicit_size {
+        let attempt = render_mask_collision_attempt(
+            layout_builder,
+            text,
+            layout_box,
+            size.max(1.0),
+            mask,
+            bubble_id,
+            render_candidate,
+        )?;
+        return Ok(attempt.candidate);
+    }
 
-    let min_attempt = try_mask_collision_size(
+    let min_size = min_size.max(1.0).round() as i32;
+    let max_size = (max_size.max(1.0).round() as i32).max(min_size);
+
+    if let Some(candidate) = try_mask_collision_size(
         layout_builder,
         text,
-        writing_mode,
+        layout_box,
+        max_size as f32,
+        mask,
+        bubble_id,
+        render_candidate,
+    )? {
+        return Ok(candidate);
+    }
+
+    let min_attempt = render_mask_collision_attempt(
+        layout_builder,
+        text,
         layout_box,
         min_size as f32,
         mask,
         bubble_id,
         render_candidate,
     )?;
-    let Some(mut best) = min_attempt.valid else {
-        if let Some(fallback) = min_attempt.fallback {
-            return Ok(fallback);
-        }
-        return render_collision_fallback(
-            layout_builder,
-            text,
-            writing_mode,
-            layout_box,
-            min_size as f32,
-            render_candidate,
-        );
-    };
+    if !min_attempt.valid {
+        return Ok(min_attempt.candidate);
+    }
+    let mut best = min_attempt.candidate;
 
     let mut lo = min_size + 1;
-    let mut hi = max_size;
+    let mut hi = max_size - 1;
     while lo <= hi {
         let mid = lo + (hi - lo) / 2;
-        let attempt = try_mask_collision_size(
+        if let Some(candidate) = try_mask_collision_size(
             layout_builder,
             text,
-            writing_mode,
             layout_box,
             mid as f32,
             mask,
             bubble_id,
             render_candidate,
-        )?;
-        if let Some(candidate) = attempt.valid {
+        )? {
             best = candidate;
             lo = mid + 1;
         } else {
@@ -554,119 +527,71 @@ where
 fn try_mask_collision_size<'a, F>(
     layout_builder: &TextLayout<'a>,
     text: &str,
-    writing_mode: WritingMode,
     layout_box: LayoutBox,
     font_size: f32,
     mask: &GrayImage,
     bubble_id: u8,
     render_candidate: &mut F,
-) -> Result<CollisionFitAttempt>
+) -> Result<Option<RenderedTextCandidate>>
 where
     F: FnMut(&LayoutRun<'a>) -> Result<RenderedTextCandidate>,
 {
-    let mut fallback = None;
-    for main_extent in collision_squeeze_extents(layout_box, writing_mode) {
-        let layout = run_collision_layout_at(
-            layout_builder,
-            text,
-            writing_mode,
-            layout_box,
-            font_size,
-            main_extent,
-        )?;
-        if !layout_fits_collision_attempt(&layout, writing_mode, layout_box, main_extent) {
-            continue;
-        }
-        let candidate = render_candidate(&layout)?;
-        if sprite_collides_with_bubble_mask(&candidate.image, &candidate.transform, mask, bubble_id)
-        {
-            fallback = Some(candidate);
-            continue;
-        }
-        return Ok(CollisionFitAttempt {
-            valid: Some(candidate),
-            fallback,
-        });
+    let layout = run_collision_layout_at(layout_builder, text, layout_box, font_size)?;
+    let fits_layout_box = layout_fits_collision_attempt(&layout, layout_box);
+    if !fits_layout_box {
+        return Ok(None);
     }
 
-    Ok(CollisionFitAttempt {
-        valid: None,
-        fallback,
-    })
+    let candidate = render_candidate(&layout)?;
+    if sprite_collides_with_bubble_mask(&candidate.image, &candidate.transform, mask, bubble_id) {
+        return Ok(None);
+    }
+    Ok(Some(candidate))
 }
 
-fn render_collision_fallback<'a, F>(
+#[allow(clippy::too_many_arguments)]
+fn render_mask_collision_attempt<'a, F>(
     layout_builder: &TextLayout<'a>,
     text: &str,
-    writing_mode: WritingMode,
     layout_box: LayoutBox,
     font_size: f32,
+    mask: &GrayImage,
+    bubble_id: u8,
     render_candidate: &mut F,
-) -> Result<RenderedTextCandidate>
+) -> Result<MaskCollisionAttempt>
 where
     F: FnMut(&LayoutRun<'a>) -> Result<RenderedTextCandidate>,
 {
-    let layout = run_collision_layout_at(
-        layout_builder,
-        text,
-        writing_mode,
-        layout_box,
-        font_size,
-        primary_collision_extent(layout_box, writing_mode),
-    )?;
-    render_candidate(&layout)
+    let layout = run_collision_layout_at(layout_builder, text, layout_box, font_size)?;
+    let fits_layout_box = layout_fits_collision_attempt(&layout, layout_box);
+    let candidate = render_candidate(&layout)?;
+    let valid = fits_layout_box
+        && !sprite_collides_with_bubble_mask(
+            &candidate.image,
+            &candidate.transform,
+            mask,
+            bubble_id,
+        );
+    Ok(MaskCollisionAttempt { candidate, valid })
 }
 
 fn run_collision_layout_at<'a>(
     layout_builder: &TextLayout<'a>,
     text: &str,
-    writing_mode: WritingMode,
     layout_box: LayoutBox,
     font_size: f32,
-    main_extent: f32,
 ) -> Result<LayoutRun<'a>> {
-    let (max_width, max_height) = match writing_mode {
-        WritingMode::Horizontal => (main_extent, layout_box.height),
-        WritingMode::VerticalRl => (layout_box.width, main_extent),
-    };
     layout_builder
         .clone()
         .with_font_size(font_size.max(1.0))
-        .with_max_width(max_width.max(1.0))
-        .with_max_height(max_height.max(1.0))
+        .with_max_width(layout_box.width.max(1.0))
+        .with_max_height(layout_box.height.max(1.0))
         .run(text)
 }
 
-fn layout_fits_collision_attempt(
-    layout: &LayoutRun<'_>,
-    writing_mode: WritingMode,
-    layout_box: LayoutBox,
-    main_extent: f32,
-) -> bool {
-    let fits_box = layout.width <= layout_box.width + FIT_EPSILON
-        && layout.height <= layout_box.height + FIT_EPSILON;
-    let fits_main = match writing_mode {
-        WritingMode::Horizontal => layout.width <= main_extent + FIT_EPSILON,
-        WritingMode::VerticalRl => layout.height <= main_extent + FIT_EPSILON,
-    };
-    fits_box && fits_main
-}
-
-fn collision_squeeze_extents(layout_box: LayoutBox, writing_mode: WritingMode) -> Vec<f32> {
-    let mut extents = Vec::with_capacity(COLLISION_SQUEEZE_ATTEMPTS);
-    let mut extent = primary_collision_extent(layout_box, writing_mode);
-    for _ in 0..COLLISION_SQUEEZE_ATTEMPTS {
-        extents.push(extent.max(1.0));
-        extent *= COLLISION_SQUEEZE_FACTOR;
-    }
-    extents
-}
-
-fn primary_collision_extent(layout_box: LayoutBox, writing_mode: WritingMode) -> f32 {
-    match writing_mode {
-        WritingMode::Horizontal => layout_box.width,
-        WritingMode::VerticalRl => layout_box.height,
-    }
+fn layout_fits_collision_attempt(layout: &LayoutRun<'_>, layout_box: LayoutBox) -> bool {
+    layout.width <= layout_box.width + FIT_EPSILON
+        && layout.height <= layout_box.height + FIT_EPSILON
 }
 
 fn sprite_collides_with_bubble_mask(
@@ -744,9 +669,9 @@ fn resolve_layout_boxes(
         .into_iter()
         .map(|(seed_box, bubble_match)| match bubble_match {
             // Connected bubbles can contain multiple independently detected
-            // text blocks. Expanding all of them to the same bubble bbox makes
-            // their layouts collide, so shared bubbles fall back to each
-            // block's original detector box.
+            // text blocks. Expanding all of them to the same safe area makes
+            // their layouts collide, so shared bubbles keep each block's
+            // original detector box.
             Some(matched) if counts.get(&matched.id).copied().unwrap_or(0) == 1 => {
                 ResolvedLayoutBox {
                     seed_box,
@@ -951,21 +876,18 @@ fn rendered_direction_for_writing_mode(writing_mode: WritingMode) -> TextDirecti
 // ---------------------------------------------------------------------------
 
 fn centred_sprite_transform(
-    seed_box: LayoutBox,
+    anchor_box: LayoutBox,
     sprite_width: u32,
     sprite_height: u32,
     rotation_deg: f32,
 ) -> Transform {
-    // Place the sprite centred on the seed (detector's original text bbox).
-    // The seed is inside the bubble body, so this avoids tail-side drift when
-    // the matched bubble bbox extends into a balloon tail.
     let sprite_w = sprite_width as f32;
     let sprite_h = sprite_height as f32;
-    let seed_cx = seed_box.x + seed_box.width * 0.5;
-    let seed_cy = seed_box.y + seed_box.height * 0.5;
+    let cx = anchor_box.x + anchor_box.width * 0.5;
+    let cy = anchor_box.y + anchor_box.height * 0.5;
     Transform {
-        x: (seed_cx - sprite_w * 0.5).round(),
-        y: (seed_cy - sprite_h * 0.5).round(),
+        x: (cx - sprite_w * 0.5).round(),
+        y: (cy - sprite_h * 0.5).round(),
         width: sprite_w,
         height: sprite_h,
         rotation_deg,
@@ -1085,7 +1007,53 @@ mod tests {
     }
 
     #[test]
-    fn shared_bubble_falls_back_to_seed_boxes() {
+    fn mask_collision_fit_renders_min_size_when_no_safe_size_exists() -> Result<()> {
+        let font = any_system_font();
+        let layout_builder = TextLayout::new(&font, None);
+        let layout_box = LayoutBox {
+            x: 0.0,
+            y: 0.0,
+            width: 24.0,
+            height: 12.0,
+        };
+        let mask = GrayImage::from_pixel(64, 64, Luma([0u8]));
+        let mut rendered_sizes = Vec::new();
+        let mut render_candidate = |layout: &LayoutRun<'_>| -> Result<RenderedTextCandidate> {
+            rendered_sizes.push(layout.font_size);
+            let width = layout.width.ceil().max(1.0) as u32;
+            let height = layout.height.ceil().max(1.0) as u32;
+            Ok(RenderedTextCandidate {
+                image: RgbaImage::from_pixel(width, height, Rgba([0, 0, 0, 255])),
+                transform: Transform {
+                    x: 0.0,
+                    y: 0.0,
+                    width: width as f32,
+                    height: height as f32,
+                    rotation_deg: 0.0,
+                },
+            })
+        };
+
+        let candidate = fit_rendered_with_mask_collision(
+            &layout_builder,
+            "overflowing text",
+            layout_box,
+            None,
+            12.0,
+            18.0,
+            &mask,
+            1,
+            &mut render_candidate,
+        )?;
+
+        assert_eq!(rendered_sizes.last().copied(), Some(12.0));
+        assert!(candidate.image.width() >= 1);
+        assert!(candidate.image.height() >= 1);
+        Ok(())
+    }
+
+    #[test]
+    fn shared_bubble_keeps_seed_boxes_to_avoid_overlap() {
         let mut mask = GrayImage::from_pixel(200, 200, Luma([0u8]));
         paint_rect(&mut mask, 10, 10, 190, 190, 1);
         let index = BubbleIndex::new(mask);
@@ -1114,6 +1082,21 @@ mod tests {
         assert!(layout_boxes[0].layout_box.width > blocks[0].transform.width);
         assert!(layout_boxes[0].layout_box.height > blocks[0].transform.height);
         assert_eq!(layout_boxes[0].bubble_id, Some(1));
+    }
+
+    #[test]
+    fn locked_block_keeps_manual_layout_box_inside_bubble() {
+        let mut mask = GrayImage::from_pixel(200, 200, Luma([0u8]));
+        paint_rect(&mut mask, 20, 20, 180, 180, 1);
+        let index = BubbleIndex::new(mask);
+        let mut locked = block(70.0, 70.0, 20.0, 30.0, "hello");
+        locked.lock_layout_box = true;
+        let blocks = vec![locked];
+
+        let layout_boxes = resolve_layout_boxes(&blocks, Some(&index));
+
+        assert_eq!(layout_boxes[0].layout_box, seed_layout_box(&blocks[0]));
+        assert_eq!(layout_boxes[0].bubble_id, None);
     }
 
     #[test]
@@ -1162,25 +1145,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn collision_squeeze_extents_retry_the_primary_axis() {
-        let layout_box = LayoutBox {
-            x: 0.0,
-            y: 0.0,
-            width: 100.0,
-            height: 50.0,
-        };
-
-        assert_eq!(
-            collision_squeeze_extents(layout_box, WritingMode::Horizontal),
-            vec![100.0, 90.0, 81.0]
-        );
-        assert_eq!(
-            collision_squeeze_extents(layout_box, WritingMode::VerticalRl),
-            vec![50.0, 45.0, 40.5]
-        );
-    }
-
     fn block(x: f32, y: f32, width: f32, height: f32, translation: &str) -> RenderBlockInput {
         RenderBlockInput {
             node_id: NodeId::new(),
@@ -1206,5 +1170,68 @@ mod tests {
                 img.put_pixel(x, y, Luma([value]));
             }
         }
+    }
+
+    fn any_system_font() -> Font {
+        let mut book = FontBook::new();
+        let preferred = [
+            "Yu Gothic",
+            "MS Gothic",
+            "Noto Sans CJK JP",
+            "Noto Sans",
+            "Arial",
+            "DejaVu Sans",
+            "Liberation Sans",
+        ];
+
+        for name in preferred {
+            if let Some(post_script_name) = book
+                .all_families()
+                .into_iter()
+                .find(|face| {
+                    face.post_script_name == name
+                        || face
+                            .families
+                            .iter()
+                            .any(|(family, _)| family.as_str() == name)
+                })
+                .map(|face| face.post_script_name)
+                .filter(|post_script_name| !post_script_name.is_empty())
+                && let Ok(font) = book.query(&post_script_name)
+            {
+                return font;
+            }
+        }
+
+        if let Some(face) = book
+            .all_families()
+            .into_iter()
+            .find(|face| !face.post_script_name.is_empty())
+        {
+            return book
+                .query(&face.post_script_name)
+                .expect("failed to load first system font");
+        }
+
+        panic!("no system font available for tests");
+    }
+
+    #[test]
+    fn centred_sprite_transform_anchors_to_provided_box_center() {
+        let anchor = LayoutBox {
+            x: 100.0,
+            y: 100.0,
+            width: 200.0,
+            height: 100.0,
+        };
+        let sprite_w = 100;
+        let sprite_h = 50;
+
+        let transform = centred_sprite_transform(anchor, sprite_w, sprite_h, 0.0);
+
+        // Center of anchor is (200, 150).
+        // Sprite (100x50) centered on (200, 150) starts at (150, 125).
+        assert_eq!(transform.x, 150.0);
+        assert_eq!(transform.y, 125.0);
     }
 }

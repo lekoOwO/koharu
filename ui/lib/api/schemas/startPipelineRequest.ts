@@ -3,6 +3,7 @@
  * Do not edit manually.
  * OpenAPI spec version: 0.0.1
  */
+import type { NodeId } from './nodeId'
 import type { PageId } from './pageId'
 import type { Region } from './region'
 
@@ -23,4 +24,9 @@ export interface StartPipelineRequest {
   systemPrompt?: string | null
   /** @nullable */
   targetLanguage?: string | null
+  /**
+   * Optional text-node ids for engines that can operate on individual blocks.
+   * @nullable
+   */
+  textNodeIds?: NodeId[] | null
 }
