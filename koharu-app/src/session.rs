@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use atomicwrites::{AtomicFile, OverwriteBehavior};
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
-use fs4::fs_std::FileExt;
+use fs4::FileExt;
 use indexmap::IndexMap;
 use koharu_core::{Node, NodeId, Page, PageId, ProjectMeta, Scene, op::Op};
 use parking_lot::{Mutex, RwLock};
@@ -157,8 +157,7 @@ impl ProjectSession {
             .truncate(false)
             .open(lock_path.as_std_path())
             .with_context(|| format!("open lock file {}", lock_path))?;
-        lock.try_lock_exclusive()
-            .context("project is already open elsewhere")?;
+        FileExt::try_lock(&lock).context("project is already open elsewhere")?;
 
         let blobs = Arc::new(BlobStore::open(dir.join(BLOBS_DIR).as_std_path())?);
 
@@ -260,7 +259,10 @@ fn load_snapshot(dir: &Utf8Path, creating: bool) -> Result<(Scene, u64)> {
             return Ok(v0.migrate());
         }
 
-        anyhow::bail!("decode failed for both V1 and V0 formats (file: {})", scene_path);
+        anyhow::bail!(
+            "decode failed for both V1 and V0 formats (file: {})",
+            scene_path
+        );
     }
 
     // No snapshot — build one from `project.toml` (or defaults for creation).

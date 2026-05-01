@@ -228,6 +228,7 @@ async fn run() -> Result<()> {
             default_font: cli.default_font.clone(),
             batch_translation_char_limit: None,
             terminology: Vec::new(),
+            text_node_ids: None,
             region: None,
         },
     };
