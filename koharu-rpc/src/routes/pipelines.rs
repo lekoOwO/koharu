@@ -12,6 +12,7 @@ use axum::extract::State;
 use koharu_app::pipeline::{
     self, PipelineRunOptions, PipelineSpec, ProgressTick, Scope, WarningTick,
 };
+use koharu_app::terminology;
 use koharu_core::{
     AppEvent, JobFinishedEvent, JobStatus, JobSummary, JobWarningEvent, NodeId, PageId,
     PipelineProgress, PipelineStatus, ReadingOrder, Region,
@@ -50,6 +51,10 @@ pub struct StartPipelineRequest {
     pub default_font: Option<String>,
     #[serde(default)]
     pub reading_order: Option<ReadingOrder>,
+    /// When set, process detection/OCR across pages first, then translate OCR
+    /// text in cross-page batches up to this character limit before rendering.
+    #[serde(default)]
+    pub batch_translation_char_limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -75,6 +80,8 @@ async fn start_pipeline(
     for id in &req.steps {
         pipeline::Registry::find(id).map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
     }
+    let config = (**app.config.load()).clone();
+    let terminology = terminology::load_active_glossaries(&config).map_err(ApiError::internal)?;
     let spec = PipelineSpec {
         scope: match req.pages {
             Some(pages) => Scope::Pages(pages),
@@ -85,6 +92,8 @@ async fn start_pipeline(
             target_language: req.target_language,
             system_prompt: req.system_prompt,
             default_font: req.default_font,
+            batch_translation_char_limit: req.batch_translation_char_limit.filter(|v| *v > 0),
+            terminology,
             text_node_ids: req.text_node_ids,
             region: req.region,
             reading_order: req.reading_order,

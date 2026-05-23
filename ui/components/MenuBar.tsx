@@ -5,6 +5,7 @@ import Image from 'next/image'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { BatchProcessDialog, type PipelineStageKey } from '@/components/BatchProcessDialog'
 import { fitCanvasToViewport, resetCanvasScale } from '@/components/Canvas'
 import { SettingsDialog, type TabId } from '@/components/SettingsDialog'
 import {
@@ -17,11 +18,15 @@ import {
   MenubarTrigger,
 } from '@/components/ui/menubar'
 import { useScene } from '@/hooks/useScene'
-import { getConfig, startPipeline } from '@/lib/api/default/default'
+import { getConfig, getGetSceneJsonQueryKey, startPipeline } from '@/lib/api/default/default'
+import type { SceneSnapshot } from '@/lib/api/schemas'
 import { isTauri, openExternalUrl } from '@/lib/backend'
 import { exportCurrentProjectAs, importPages } from '@/lib/io/pagesIo'
+import type { StreamingUnzipProgress } from '@/lib/io/streamingUnzip'
 import { closeProject, redoOp, selectAllTextNodesOnCurrentPage, undoOp } from '@/lib/io/scene'
+import { exportTranslationXml, importTranslationXmlFromFile } from '@/lib/io/translationXml'
 import { formatShortcutForDisplay, getPlatform } from '@/lib/shortcutUtils'
+import { queryClient } from '@/lib/queryClient'
 import { useEditorUiStore } from '@/lib/stores/editorUiStore'
 import { usePreferencesStore } from '@/lib/stores/preferencesStore'
 import { useSelectionStore } from '@/lib/stores/selectionStore'
@@ -62,6 +67,8 @@ export function MenuBar() {
   const { t } = useTranslation()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<TabId>('appearance')
+  const [batchDialogOpen, setBatchDialogOpen] = useState(false)
+  const [exportProgress, setExportProgress] = useState<StreamingUnzipProgress | null>(null)
   const hasPage = useSelectionStore((s) => s.pageId !== null)
   const hasScene = useScene().scene !== null
   const shortcuts = usePreferencesStore((state) => state.shortcuts)
@@ -91,11 +98,56 @@ export function MenuBar() {
     const prefs = usePreferencesStore.getState()
     await startPipeline({
       steps,
-      pages: opts.pageId ? [opts.pageId] : undefined,
+      pages: opts.pageId
+        ? [opts.pageId]
+        : (() => {
+            const snap = queryClient.getQueryData<SceneSnapshot>(getGetSceneJsonQueryKey())
+            const pages = snap?.scene?.pages
+            if (!pages) return undefined
+            return Object.values(pages).filter(p => !p.excluded).map(p => p.id)
+          })(),
       targetLanguage: editor.selectedLanguage,
       systemPrompt: prefs.customSystemPrompt,
       defaultFont: prefs.defaultFont,
       readingOrder: editor.readingOrder === 'custom' ? undefined : editor.readingOrder,
+      batchTranslationCharLimit: prefs.batchTranslationCharLimit,
+    })
+  }
+
+  const runSelectivePipeline = async (stages: PipelineStageKey[]) => {
+    const cfg = await getConfig()
+    if (!cfg.pipeline) return
+    const p = cfg.pipeline
+    const stageToEngines: Record<PipelineStageKey, (string | undefined)[]> = {
+      detect: [p.detector, p.segmenter, p.bubble_segmenter, p.font_detector],
+      segment: [p.segmenter, p.bubble_segmenter],
+      ocr: [p.ocr],
+      translate: [p.translator],
+      inpaint: [p.inpainter],
+      render: [p.renderer],
+    }
+    const steps = stages
+      .flatMap((s) => stageToEngines[s])
+      .filter((s): s is string => !!s)
+    if (steps.length === 0) return
+
+    const editor = useEditorUiStore.getState()
+    const prefs = usePreferencesStore.getState()
+    const snap = queryClient.getQueryData<SceneSnapshot>(getGetSceneJsonQueryKey())
+    const scene = snap?.scene
+
+    await startPipeline({
+      steps,
+      pages: scene
+        ? Object.values(scene.pages)
+            .filter((p) => !p.excluded)
+            .map((p) => p.id)
+        : undefined,
+      targetLanguage: editor.selectedLanguage,
+      systemPrompt: prefs.customSystemPrompt,
+      defaultFont: prefs.defaultFont,
+      readingOrder: editor.readingOrder === 'custom' ? undefined : editor.readingOrder,
+      batchTranslationCharLimit: prefs.batchTranslationCharLimit,
     })
   }
 
@@ -119,16 +171,44 @@ export function MenuBar() {
       testId: 'menu-file-export-psd',
     },
     {
-      label: t('menu.exportAllInpainted'),
-      onSelect: () => void exportCurrentProjectAs('inpainted'),
-      disabled: !hasScene,
+      label: exportProgress
+        ? t('menu.exportingProgress', {
+            downloaded: Math.round(exportProgress.downloadedBytes / 1024 / 1024),
+            total: exportProgress.totalBytes
+              ? Math.round(exportProgress.totalBytes / 1024 / 1024)
+              : '?',
+            files: exportProgress.filesWritten,
+          })
+        : t('menu.exportAllInpainted'),
+      onSelect: () =>
+        void exportCurrentProjectAs('inpainted', undefined, (p) => setExportProgress(p)).finally(
+          () => setExportProgress(null),
+        ),
+      disabled: !hasScene || !!exportProgress,
       testId: 'menu-file-export-all-inpainted',
     },
     {
-      label: t('menu.exportAllRendered'),
-      onSelect: () => void exportCurrentProjectAs('rendered'),
-      disabled: !hasScene,
+      label: exportProgress
+        ? t('menu.exportingProgress', {
+            downloaded: Math.round(exportProgress.downloadedBytes / 1024 / 1024),
+            total: exportProgress.totalBytes
+              ? Math.round(exportProgress.totalBytes / 1024 / 1024)
+              : '?',
+            files: exportProgress.filesWritten,
+          })
+        : t('menu.exportAllRendered'),
+      onSelect: () =>
+        void exportCurrentProjectAs('rendered', undefined, (p) => setExportProgress(p)).finally(
+          () => setExportProgress(null),
+        ),
+      disabled: !hasScene || !!exportProgress,
       testId: 'menu-file-export-all-rendered',
+    },
+    {
+      label: t('menu.exportTranslationXml'),
+      onSelect: () => void exportTranslationXml(),
+      disabled: !hasScene,
+      testId: 'menu-file-export-translation-xml',
     },
   ]
 
@@ -158,9 +238,15 @@ export function MenuBar() {
         },
         {
           label: t('menu.processAll'),
-          onSelect: () => void runPipeline({}),
+          onSelect: () => setBatchDialogOpen(true),
           disabled: !hasScene,
           testId: 'menu-process-all',
+        },
+        {
+          label: t('menu.processAllBatchTranslation'),
+          onSelect: () => void runPipeline({}),
+          disabled: !hasScene,
+          testId: 'menu-process-all-batch-translation',
         },
       ],
     },
@@ -216,6 +302,15 @@ export function MenuBar() {
               onSelect={() => void exportCurrentProjectAs('khr')}
             >
               {t('menu.saveAs')}
+            </MenubarItem>
+            <MenubarSeparator />
+            <MenubarItem
+              data-testid='menu-file-import-translation-xml'
+              className='text-[13px]'
+              disabled={!hasScene}
+              onSelect={() => void importTranslationXmlFromFile()}
+            >
+              {t('menu.importTranslationXml')}
             </MenubarItem>
             <MenubarSeparator />
             {exportItems.map((item) => (
@@ -342,6 +437,11 @@ export function MenuBar() {
       <div data-tauri-drag-region className='flex h-full flex-1 items-center justify-center' />
       {isWindowsTauri && <WindowControls />}
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} defaultTab={settingsTab} />
+      <BatchProcessDialog
+        open={batchDialogOpen}
+        onOpenChange={setBatchDialogOpen}
+        onConfirm={(stages) => void runSelectivePipeline(stages)}
+      />
     </div>
   )
 }

@@ -179,6 +179,8 @@ impl KoharuServer {
         let session = app
             .current_session()
             .ok_or_else(|| rmcp::ErrorData::invalid_request("no project open", None))?;
+        let config = (**app.config.load()).clone();
+        let terminology = koharu_app::terminology::load_active_glossaries(&config).map_err(err)?;
         let spec = PipelineSpec {
             scope: match input.pages {
                 Some(pages) => Scope::Pages(pages),
@@ -189,6 +191,8 @@ impl KoharuServer {
                 target_language: input.target_language,
                 system_prompt: input.system_prompt,
                 default_font: input.default_font,
+                batch_translation_char_limit: None,
+                terminology,
                 text_node_ids: input.text_node_ids,
                 reading_order: input.reading_order,
                 region: None,

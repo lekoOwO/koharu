@@ -2493,6 +2493,11 @@
         "type": "object",
         "required": ["id", "name", "width", "height", "nodes"],
         "properties": {
+          "excluded": {
+            "type": "boolean",
+            "default": false,
+            "description": "When true, this page is excluded from batch processing operations."
+          },
           "height": {
             "type": "integer",
             "format": "int32",
@@ -2529,6 +2534,9 @@
       "PagePatch": {
         "type": "object",
         "properties": {
+          "excluded": {
+            "type": ["boolean", "null"]
+          },
           "height": {
             "type": ["integer", "null"],
             "format": "int32",
@@ -2946,6 +2954,11 @@
         "type": "object",
         "required": ["steps"],
         "properties": {
+          "batchTranslationCharLimit": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "description": "When set, process detection/OCR across pages first, then translate OCR text in cross-page batches up to this character limit before rendering."
+          },
           "defaultFont": {
             "type": ["string", "null"]
           },

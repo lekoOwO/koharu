@@ -39,6 +39,8 @@ fn app_api() -> OpenApiRouter<ApiState> {
         .merge(routes::llm::router())
         .merge(routes::ai::router())
         .merge(routes::pipelines::router())
+        .merge(routes::terminology::router())
+        .merge(routes::translation_xml::router())
         .merge(binary::router())
 }
 

@@ -17,6 +17,8 @@ type PreferencesState = {
   toggleFavoriteFont: (font: string) => void
   customSystemPrompt?: string
   setCustomSystemPrompt: (prompt?: string) => void
+  batchTranslationCharLimit: number
+  setBatchTranslationCharLimit: (limit: number) => void
   codexImagePrompt?: string
   setCodexImagePrompt: (prompt?: string) => void
   codexImageModel?: string
@@ -57,6 +59,7 @@ const initialPreferences = {
   codexImagePrompt:
     'Translate all visible text to natural English, remove the original lettering, and redraw the page as a clean manga image while preserving the artwork, panel layout, speech bubbles, tone, and composition.',
   codexImageModel: 'gpt-5.5',
+  batchTranslationCharLimit: 1200,
 }
 
 export const usePreferencesStore = create<PreferencesState>()(
@@ -78,6 +81,8 @@ export const usePreferencesStore = create<PreferencesState>()(
             : [...state.favoriteFonts, font],
         })),
       setCustomSystemPrompt: (prompt) => set({ customSystemPrompt: prompt }),
+      setBatchTranslationCharLimit: (limit) =>
+        set({ batchTranslationCharLimit: Math.max(1, Math.floor(limit)) }),
       setCodexImagePrompt: (prompt) => set({ codexImagePrompt: prompt }),
       setCodexImageModel: (model) => set({ codexImageModel: model }),
       setShortcuts: (shortcuts) =>
@@ -97,7 +102,7 @@ export const usePreferencesStore = create<PreferencesState>()(
     }),
     {
       name: 'koharu-config',
-      version: 6,
+      version: 7,
       migrate: (persisted: any, version: number) => {
         if (version < 2 && persisted) {
           delete persisted.localLlm
@@ -129,6 +134,9 @@ export const usePreferencesStore = create<PreferencesState>()(
           persisted.codexImagePrompt ??= initialPreferences.codexImagePrompt
           persisted.codexImageModel ??= initialPreferences.codexImageModel
         }
+        if (version < 7 && persisted) {
+          persisted.batchTranslationCharLimit ??= initialPreferences.batchTranslationCharLimit
+        }
         return persisted
       },
       partialize: (state) => ({
@@ -136,6 +144,7 @@ export const usePreferencesStore = create<PreferencesState>()(
         defaultFont: state.defaultFont,
         favoriteFonts: state.favoriteFonts,
         customSystemPrompt: state.customSystemPrompt,
+        batchTranslationCharLimit: state.batchTranslationCharLimit,
         codexImagePrompt: state.codexImagePrompt,
         codexImageModel: state.codexImageModel,
         shortcuts: state.shortcuts,

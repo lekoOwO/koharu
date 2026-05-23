@@ -16,17 +16,18 @@ vi.mock('@/lib/io/openFiles', () => ({
 vi.mock('@/lib/io/saveBlob', async () => {
   // Keep the real `filenameFromContentDisposition` so the export flow can
   // read server-provided filenames from `Content-Disposition`. Only stub
-  // `saveBlob` itself, since it touches the filesystem / Tauri dialog.
+  // filesystem-facing save helpers.
   const actual = await vi.importActual<typeof import('@/lib/io/saveBlob')>('@/lib/io/saveBlob')
   return {
     ...actual,
     saveBlob: vi.fn().mockResolvedValue(true),
+    saveBlobViaStream: vi.fn().mockResolvedValue(true),
   }
 })
 
 import { openImageFiles, openImageFolder, openKhrFile } from '@/lib/io/openFiles'
 import { exportCurrentProjectAs, importKhrFile, importPages } from '@/lib/io/pagesIo'
-import { saveBlob } from '@/lib/io/saveBlob'
+import { saveBlob, saveBlobViaStream } from '@/lib/io/saveBlob'
 
 const asMock = <T extends (...args: never) => unknown>(fn: T) =>
   fn as unknown as ReturnType<typeof vi.fn>
@@ -161,21 +162,16 @@ describe('importKhrFile', () => {
 })
 
 describe('exportCurrentProjectAs', () => {
-  it('posts the format and delegates to saveBlob', async () => {
-    const seen: Array<Record<string, unknown>> = []
-    server.use(
-      http.post('/api/v1/projects/current/export', async ({ request }) => {
-        seen.push((await request.json()) as Record<string, unknown>)
-        return HttpResponse.arrayBuffer(new Uint8Array([0]).buffer, {
-          headers: { 'content-type': 'application/zip' },
-        })
-      }),
-    )
-
+  it('delegates multi-page ZIP exports to streaming save', async () => {
     await exportCurrentProjectAs('rendered', ['p1', 'p2'])
-    expect(seen).toEqual([{ format: 'rendered', pages: ['p1', 'p2'] }])
-    expect(saveBlob).toHaveBeenCalledTimes(1)
-    const [, filename] = asMock(saveBlob).mock.calls[0]
+    expect(saveBlob).not.toHaveBeenCalled()
+    expect(saveBlobViaStream).toHaveBeenCalledTimes(1)
+    const [, init, filename] = asMock(saveBlobViaStream).mock.calls[0]
+    expect(init).toMatchObject({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(JSON.parse(init.body as string)).toEqual({ format: 'rendered', pages: ['p1', 'p2'] })
     expect(filename).toBe('koharu-export.zip')
   })
 

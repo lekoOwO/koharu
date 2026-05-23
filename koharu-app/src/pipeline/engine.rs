@@ -32,6 +32,7 @@ use crate::blobs::BlobStore;
 use crate::llm;
 use crate::pipeline::artifacts::Artifact;
 use crate::renderer;
+use crate::terminology::ActiveGlossary;
 
 // ---------------------------------------------------------------------------
 // EngineCtx — everything an engine needs to produce ops
@@ -55,6 +56,8 @@ pub struct PipelineRunOptions {
     pub target_language: Option<String>,
     pub system_prompt: Option<String>,
     pub default_font: Option<String>,
+    pub batch_translation_char_limit: Option<usize>,
+    pub terminology: Vec<ActiveGlossary>,
     /// Optional text-node scope for engines that can operate on individual
     /// text blocks. Engines that render full-page artifacts ignore it.
     pub text_node_ids: Option<Vec<NodeId>>,

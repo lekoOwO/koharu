@@ -10,6 +10,8 @@ import type { Region } from './region'
 
 export interface StartPipelineRequest {
   /** @nullable */
+  batchTranslationCharLimit?: number | null
+  /** @nullable */
   defaultFont?: string | null
   /**
    * `None` → whole project, `Some(pages)` → just those pages.
